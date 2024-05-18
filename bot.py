@@ -176,7 +176,6 @@ def cancel(update: Update, context: CallbackContext) -> int:
 
 
 def main() -> None:
-    # Инициализация базы данных
     init_db()
 
     updater = Updater(TOKEN)
