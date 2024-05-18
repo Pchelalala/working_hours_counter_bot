@@ -1,3 +1,4 @@
+import sqlite3
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
 from datetime import datetime
@@ -6,7 +7,62 @@ TOKEN = ''
 
 SELECT_ACTION, ADD_WORK_HOURS, GET_HOURS_BY_DAY, GET_HOURS_BY_MONTH, GET_HOURS_BY_PERIOD = range(5)
 
-work_hours = {}
+
+def init_db():
+    conn = sqlite3.connect('work_hours.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS work_hours (
+            id INTEGER PRIMARY KEY,
+            date TEXT NOT NULL,
+            hours INTEGER NOT NULL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+def add_work_hours_to_db(date_str, hours):
+    conn = sqlite3.connect('work_hours.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO work_hours (date, hours) VALUES (?, ?)
+    ''', (date_str, hours))
+    conn.commit()
+    conn.close()
+
+
+def get_work_hours_by_date(date_str):
+    conn = sqlite3.connect('work_hours.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT SUM(hours) FROM work_hours WHERE date = ?
+    ''', (date_str,))
+    result = cursor.fetchone()[0]
+    conn.close()
+    return result if result else 0
+
+
+def get_work_hours_by_month(year, month):
+    conn = sqlite3.connect('work_hours.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT SUM(hours) FROM work_hours WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?
+    ''', (year, month))
+    result = cursor.fetchone()[0]
+    conn.close()
+    return result if result else 0
+
+
+def get_work_hours_by_period(start_date_str, end_date_str):
+    conn = sqlite3.connect('work_hours.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT SUM(hours) FROM work_hours WHERE date BETWEEN ? AND ?
+    ''', (start_date_str, end_date_str))
+    result = cursor.fetchone()[0]
+    conn.close()
+    return result if result else 0
 
 
 def start(update: Update, context: CallbackContext) -> int:
@@ -36,11 +92,7 @@ def process_add_work_hours(update: Update, context: CallbackContext) -> int:
         date = datetime(year, month, day)
         date_str = date.strftime("%Y-%m-%d")
 
-        if date_str not in work_hours:
-            work_hours[date_str] = hours
-        else:
-            work_hours[date_str] += hours
-
+        add_work_hours_to_db(date_str, hours)
         update.message.reply_text("Часы работы успешно добавлены.")
     except Exception as e:
         update.message.reply_text(f"Ошибка: {e}")
@@ -60,7 +112,7 @@ def process_get_hours_by_day(update: Update, context: CallbackContext) -> int:
         data = update.message.text.split()
         day, month, year = map(int, data)
         date_str = f"{year}-{month:02d}-{day:02d}"
-        hours = work_hours.get(date_str, 0)
+        hours = get_work_hours_by_date(date_str)
 
         update.message.reply_text(f"Часы работы в указанный день: {hours}")
     except Exception as e:
@@ -80,13 +132,10 @@ def process_get_hours_by_month(update: Update, context: CallbackContext) -> int:
     try:
         data = update.message.text.split()
         month, year = map(int, data)
-        total_hours = 0
-        for date_str, hours in work_hours.items():
-            date = datetime.strptime(date_str, "%Y-%m-%d")
-            if date.month == month and date.year == year:
-                total_hours += hours
+        month_str = f"{month:02d}"
+        hours = get_work_hours_by_month(year, month_str)
 
-        update.message.reply_text(f"Часы работы в указанный месяц: {total_hours}")
+        update.message.reply_text(f"Часы работы в указанный месяц: {hours}")
     except Exception as e:
         update.message.reply_text(f"Ошибка: {e}")
 
@@ -107,16 +156,12 @@ def process_get_hours_by_period(update: Update, context: CallbackContext) -> int
         start_day, start_month, start_year = map(int, start_date_str.split())
         end_day, end_month, end_year = map(int, end_date_str.split())
 
-        start_date = datetime(start_year, start_month, start_day)
-        end_date = datetime(end_year, end_month, end_day)
+        start_date = datetime(start_year, start_month, start_day).strftime("%Y-%m-%d")
+        end_date = datetime(end_year, end_month, end_day).strftime("%Y-%m-%d")
 
-        total_hours = 0
-        for date_str, hours in work_hours.items():
-            date = datetime.strptime(date_str, "%Y-%m-%d")
-            if start_date <= date <= end_date:
-                total_hours += hours
+        hours = get_work_hours_by_period(start_date, end_date)
 
-        update.message.reply_text(f"Часы работы за указанный период: {total_hours}")
+        update.message.reply_text(f"Часы работы за указанный период: {hours}")
     except Exception as e:
         update.message.reply_text(f"Ошибка: {e}")
 
@@ -131,6 +176,9 @@ def cancel(update: Update, context: CallbackContext) -> int:
 
 
 def main() -> None:
+    # Инициализация базы данных
+    init_db()
+
     updater = Updater(TOKEN)
 
     dispatcher = updater.dispatcher
